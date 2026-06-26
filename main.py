@@ -3,6 +3,7 @@ import sys
 import time
 import requests
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 # Windows console defaults to cp1252 which can't render emoji — force UTF-8
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -11,7 +12,9 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    # Load .env from the script's own directory so Task Scheduler / NSSM
+    # deployments work regardless of working directory at launch.
+    load_dotenv(Path(__file__).parent / ".env")
 except ImportError:
     pass  # dotenv optional; use environment variables or a .env file via shell
 
