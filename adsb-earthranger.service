@@ -1,0 +1,18 @@
+[Unit]
+Description=ADS-B → EarthRanger live aircraft tracking
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sam
+WorkingDirectory=/home/sam/conservation-integrations/adsb-earthranger
+EnvironmentFile=/home/sam/conservation-integrations/adsb-earthranger/.env
+ExecStart=/usr/bin/python3 -u main.py
+Restart=on-failure
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

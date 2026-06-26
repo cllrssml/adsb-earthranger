@@ -116,6 +116,19 @@ The script is designed to run continuously on a Windows PC that has LAN access t
    - Start in: `C:\adsb-earthranger\`
 5. **Settings**: Check "Restart the task if it fails" (every 1 minute)
 
+### Option C — Linux / WSL (systemd)
+
+A systemd unit file is included. Copy it to your user services directory:
+
+```bash
+cp adsb-earthranger.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now adsb-earthranger
+journalctl --user -u adsb-earthranger -f   # follow logs
+```
+
+---
+
 ### Option B — NSSM (recommended for production)
 
 [NSSM](https://nssm.cc) wraps any executable as a proper Windows service with automatic restart.
