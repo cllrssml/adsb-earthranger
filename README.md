@@ -53,20 +53,38 @@ Open PowerShell **as Administrator** and run:
 
 ```powershell
 Set-ExecutionPolicy Bypass -Scope Process -Force
-Invoke-WebRequest https://raw.githubusercontent.com/cllrssml/adsb-earthranger/main/install.ps1 -OutFile install.ps1
+Invoke-WebRequest https://raw.githubusercontent.com/cllrssml/adsb-earthranger/main/install.ps1 -OutFile install.ps1 -UseBasicParsing
 .\install.ps1
 ```
 
 The installer will:
-- Install Python 3.12 automatically if not already present
+- Install Python 3.12 automatically if not already present (via winget)
 - Download the latest release from GitHub (no Git required)
 - Prompt for your EarthRanger URL, token, and receiver IP
 - Register a Task Scheduler task that starts at boot and auto-restarts on failure
+
+When prompted for `ER_SITE`, enter the URL **without** a trailing slash:
+```
+https://your-site.pamdas.org        ✅
+https://your-site.pamdas.org/       ❌
+```
 
 Monitor the output afterwards with:
 
 ```powershell
 Get-Content C:\adsb-earthranger\output.log -Wait -Tail 20 -Encoding UTF8
+```
+
+### Updating
+
+Re-run the installer at any time to pull the latest version. Your `.env` is preserved automatically.
+
+### Uninstalling
+
+```powershell
+Stop-ScheduledTask -TaskName adsb-earthranger -ErrorAction SilentlyContinue
+Unregister-ScheduledTask -TaskName adsb-earthranger -Confirm:$false
+Remove-Item "C:\adsb-earthranger" -Recurse -Force
 ```
 
 ---
@@ -112,15 +130,18 @@ Example output:
    Receiver : http://192.168.1.39:8080/data/aircraft.json
    ER site  : https://your-site.pamdas.org
    Poll      : every 10s  |  stale threshold: 30s
-   📋  3 aircraft already known in ER
+   📋  12 aircraft already known in ER
    🗂️  Subject group 'ADS-B' found (25a01b11-...)
 
 ⏱️  08:12:04
-   ✈️  Registering: SAA189 (00af60)  subtype=plane
+   Registering: SAA189 (00af60)  subtype=plane
    🗂️  Added SAA189 to 'ADS-B' group
-   ✅  2 observation(s) posted
+   ✅  3 observation(s) posted
 ⏱️  08:12:14
-   ✅  2 observation(s) posted
+   Updated ZS-HLJ: subtype plane -> helicopter
+   ✅  3 observation(s) posted
+⏱️  08:12:25
+   ✅  3 observation(s) posted
 ```
 
 ---
