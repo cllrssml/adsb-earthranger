@@ -35,15 +35,41 @@ CATEGORY_SUBTYPES = {
 }
 DEFAULT_SUBTYPE = "plane"  # fixed-wing: covers A1-A6, B1, B4 etc.
 
+ADSBDB_URL = "https://api.adsbdb.com/v0/aircraft/{hex}"
+
 session = requests.Session()
 session.headers.update({
     "Authorization": f"Bearer {ER_TOKEN}",
     "Content-Type": "application/json",
 })
 
+# Per-session cache so adsbdb is only queried once per unknown aircraft.
+_reg_cache: dict[str, str | None] = {}
+
 
 def category_to_subtype(category: str) -> str:
     return CATEGORY_SUBTYPES.get(category, DEFAULT_SUBTYPE)
+
+
+def lookup_registration(hex_code: str) -> str | None:
+    """Return the civil registration for an ICAO hex code via adsbdb.com, or None.
+
+    adsbdb returns {"response": {"aircraft": {...}}} on hit,
+    or {"response": "unknown aircraft"} when the hex is not in their DB.
+    """
+    if hex_code in _reg_cache:
+        return _reg_cache[hex_code]
+    reg = None
+    try:
+        r = requests.get(ADSBDB_URL.format(hex=hex_code), timeout=5)
+        if r.status_code == 200:
+            response = r.json().get("response", {})
+            if isinstance(response, dict):
+                reg = response.get("aircraft", {}).get("registration")
+    except Exception:
+        pass
+    _reg_cache[hex_code] = reg
+    return reg
 
 
 def get_er_cache() -> dict:
@@ -128,7 +154,11 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
                     entry["subtype"] = subtype
         return entry["source"]
 
-    name = callsign.strip() if callsign and callsign.strip() else f"ICAO-{hex_code.upper()}"
+    cs = callsign.strip() if callsign else ""
+    if cs:
+        name = cs
+    else:
+        name = lookup_registration(hex_code) or f"ICAO-{hex_code.upper()}"
     print(f"   Registering: {name} ({hex_code})  subtype={subtype}")
 
     # 1. Create source (the ADS-B transponder)
