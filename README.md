@@ -47,7 +47,31 @@ The `adsb_receiver` source provider is created automatically on first run.
 
 ---
 
-## Installation
+## Quick install (Windows)
+
+Open PowerShell **as Administrator** and run:
+
+```powershell
+Set-ExecutionPolicy Bypass -Scope Process -Force
+Invoke-WebRequest https://raw.githubusercontent.com/cllrssml/adsb-earthranger/main/install.ps1 -OutFile install.ps1
+.\install.ps1
+```
+
+The installer will:
+- Install Python 3.12 automatically if not already present
+- Download the latest release from GitHub (no Git required)
+- Prompt for your EarthRanger URL, token, and receiver IP
+- Register a Task Scheduler task that starts at boot and auto-restarts on failure
+
+Monitor the output afterwards with:
+
+```powershell
+Get-Content C:\adsb-earthranger\output.log -Wait -Tail 20 -Encoding UTF8
+```
+
+---
+
+## Manual installation
 
 ```bash
 git clone https://github.com/cllrssml/adsb-earthranger.git
@@ -103,18 +127,20 @@ Example output:
 
 ## Deploying on Windows (ops room PC)
 
-The script is designed to run continuously on a Windows PC that has LAN access to the receiver.
+Use the **Quick install** script above — it handles everything automatically.
 
-### Option A — Windows Task Scheduler (simple)
+To update to a newer version, re-run the installer. Your `.env` is preserved automatically.
 
-1. Open **Task Scheduler** → Create Task
-2. **General**: Run whether user is logged on or not
-3. **Triggers**: At startup
-4. **Actions**: Start a program
-   - Program: `C:\Python312\python.exe`
-   - Arguments: `C:\adsb-earthranger\main.py`
-   - Start in: `C:\adsb-earthranger\`
-5. **Settings**: Check "Restart the task if it fails" (every 1 minute)
+### Option B — NSSM (alternative to Task Scheduler)
+
+[NSSM](https://nssm.cc) wraps the script as a proper Windows service (survives logoff):
+
+```cmd
+nssm install adsb-earthranger "C:\Python312\python.exe" "C:\adsb-earthranger\main.py"
+nssm set adsb-earthranger AppDirectory "C:\adsb-earthranger"
+nssm set adsb-earthranger AppRestartDelay 5000
+nssm start adsb-earthranger
+```
 
 ### Option C — Linux / WSL (systemd)
 
@@ -125,19 +151,6 @@ cp adsb-earthranger.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now adsb-earthranger
 journalctl --user -u adsb-earthranger -f   # follow logs
-```
-
----
-
-### Option B — NSSM (recommended for production)
-
-[NSSM](https://nssm.cc) wraps any executable as a proper Windows service with automatic restart.
-
-```cmd
-nssm install adsb-earthranger "C:\Python312\python.exe" "C:\adsb-earthranger\main.py"
-nssm set adsb-earthranger AppDirectory "C:\adsb-earthranger"
-nssm set adsb-earthranger AppRestartDelay 5000
-nssm start adsb-earthranger
 ```
 
 ---
