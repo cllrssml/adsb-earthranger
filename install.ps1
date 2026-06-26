@@ -18,8 +18,8 @@ param(
     [string]$InstallDir = "C:\adsb-earthranger"
 )
 
-$ErrorActionPreference  = "Stop"
-$ProgressPreference     = "SilentlyContinue"   # faster Invoke-WebRequest
+$ErrorActionPreference = "Stop"
+$ProgressPreference    = "SilentlyContinue"
 
 function Write-Step { param([string]$msg) Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-OK   { param([string]$msg) Write-Host "    [OK]  $msg" -ForegroundColor Green }
@@ -62,17 +62,22 @@ if (-not $python) {
         Write-Fail "winget not available. Install Python 3.10+ manually from https://python.org then re-run."
     }
     winget install --id Python.Python.3.12 --silent --accept-source-agreements --accept-package-agreements
+
     # Refresh PATH for this session
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-                [System.Environment]::GetEnvironmentVariable("Path", "User")
-    # Winget installs here by default
+    $machinePath = [System.Environment]::GetEnvironmentVariable("Path", [System.EnvironmentVariableTarget]::Machine)
+    $userPath    = [System.Environment]::GetEnvironmentVariable("Path", [System.EnvironmentVariableTarget]::User)
+    $env:Path    = $machinePath + ";" + $userPath
+
     $candidate = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe"
     if (Test-Path $candidate) {
         $python = $candidate
     } else {
         $found = Get-Command python -ErrorAction SilentlyContinue
-        if ($found) { $python = $found.Source }
-        else { Write-Fail "Python install failed. Install Python 3.10+ from https://python.org then re-run." }
+        if ($found) {
+            $python = $found.Source
+        } else {
+            Write-Fail "Python install failed. Install Python 3.10+ from https://python.org then re-run."
+        }
     }
     Write-OK "Python installed: $python"
 }
@@ -103,11 +108,11 @@ Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
 $inner = Get-ChildItem $tmpDir -Directory | Select-Object -First 1
 if (-not $inner) { Write-Fail "Unexpected zip layout — please report this issue." }
 
-# Preserve existing .env if present (re-install / upgrade scenario)
+# Preserve existing .env if present (upgrade scenario)
 $savedEnv = $null
 $envFile  = Join-Path $InstallDir ".env"
 if ((Test-Path $InstallDir) -and (Test-Path $envFile)) {
-    $savedEnv = Get-Content $envFile -Raw
+    $savedEnv = [System.IO.File]::ReadAllText($envFile)
     Write-Warn "Existing .env preserved (delete it and re-run to reconfigure)"
 }
 
@@ -117,7 +122,6 @@ Move-Item $inner.FullName $InstallDir
 if ($savedEnv) {
     [System.IO.File]::WriteAllText($envFile, $savedEnv, [System.Text.Encoding]::UTF8)
 }
-
 Write-OK "Files in place"
 
 # ---------------------------------------------------------------------------
@@ -129,8 +133,10 @@ Write-Step "Installing Python dependencies..."
 Write-OK "Dependencies installed"
 
 # ---------------------------------------------------------------------------
-# 5. Configure .env (skip if already present from an upgrade)
+# 5. Configure .env
 # ---------------------------------------------------------------------------
+$envFile = Join-Path $InstallDir ".env"
+
 if (Test-Path $envFile) {
     Write-Step "Using existing .env — skipping configuration prompts"
 } else {
@@ -147,14 +153,14 @@ if (Test-Path $envFile) {
         if (-not $erToken) { Write-Host "  ER_TOKEN is required." -ForegroundColor Yellow }
     } while (-not $erToken)
 
-    $adsbDefault    = "http://192.168.1.39:8080/data/aircraft.json"
-    $pollDefault    = "10"
-    $staleDefault   = "30"
+    $adsbDefault  = "http://192.168.1.39:8080/data/aircraft.json"
+    $pollDefault  = "10"
+    $staleDefault = "30"
 
-    $adsbUrl        = (Read-Host "  ADSB_URL [$adsbDefault]").Trim()
-    if (-not $adsbUrl)   { $adsbUrl   = $adsbDefault }
+    $adsbUrl = (Read-Host "  ADSB_URL [$adsbDefault]").Trim()
+    if (-not $adsbUrl) { $adsbUrl = $adsbDefault }
 
-    $pollInterval   = (Read-Host "  POLL_INTERVAL seconds [$pollDefault]").Trim()
+    $pollInterval = (Read-Host "  POLL_INTERVAL seconds [$pollDefault]").Trim()
     if (-not $pollInterval) { $pollInterval = $pollDefault }
 
     $staleThreshold = (Read-Host "  STALE_POS_THRESHOLD seconds [$staleDefault]").Trim()
@@ -166,15 +172,21 @@ if (Test-Path $envFile) {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Register Task Scheduler task (runs at boot, auto-restarts on failure)
+# 6. Write run.bat (avoids complex quoting in Task Scheduler argument)
+# ---------------------------------------------------------------------------
+$batFile = Join-Path $InstallDir "run.bat"
+$batContent = "@echo off`r`ncd /d `"$InstallDir`"`r`n`"$python`" -u main.py >> `"$InstallDir\output.log`" 2>&1`r`n"
+[System.IO.File]::WriteAllText($batFile, $batContent, [System.Text.Encoding]::ASCII)
+Write-OK "run.bat written"
+
+# ---------------------------------------------------------------------------
+# 7. Register Task Scheduler task
 # ---------------------------------------------------------------------------
 Write-Step "Registering Windows Task Scheduler task..."
 $taskName = "adsb-earthranger"
 $logFile  = "$InstallDir\output.log"
 
-$action = New-ScheduledTaskAction `
-    -Execute  "cmd.exe" `
-    -Argument "/c cd /d `"$InstallDir`" && `"$python`" -u main.py >> `"$logFile`" 2>&1"
+$action = New-ScheduledTaskAction -Execute $batFile
 
 $trigger = New-ScheduledTaskTrigger -AtStartup
 
@@ -185,9 +197,9 @@ $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable
 
 $principal = New-ScheduledTaskPrincipal `
-    -UserId   $env:USERNAME `
+    -UserId    $env:USERNAME `
     -LogonType Interactive `
-    -RunLevel Highest
+    -RunLevel  Highest
 
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
@@ -201,7 +213,7 @@ Register-ScheduledTask `
 Write-OK "Task '$taskName' registered — starts at boot, restarts on failure"
 
 # ---------------------------------------------------------------------------
-# 7. Start immediately
+# 8. Start immediately
 # ---------------------------------------------------------------------------
 Write-Step "Starting the integration now..."
 Start-ScheduledTask -TaskName $taskName
