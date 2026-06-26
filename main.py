@@ -1,7 +1,13 @@
 import os
+import sys
 import time
 import requests
 from datetime import datetime, timezone, timedelta
+
+# Windows console defaults to cp1252 which can't render emoji — force UTF-8
+if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 try:
     from dotenv import load_dotenv
