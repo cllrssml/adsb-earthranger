@@ -47,7 +47,7 @@ def category_to_subtype(category: str) -> str:
 
 
 def get_er_cache() -> dict:
-    """Return {icao_hex: source_id} for all ADS-B sources already in ER."""
+    """Return {icao_hex: {"source": id, "subject": id_or_None, "subtype": str_or_None}}."""
     try:
         r = session.get(
             f"{ER_SITE}/api/v1.0/sources/",
@@ -55,10 +55,33 @@ def get_er_cache() -> dict:
         )
         if r.status_code == 200:
             results = r.json().get("data", {}).get("results", []) or r.json().get("results", [])
-            return {s["manufacturer_id"]: s["id"] for s in results}
+            return {s["manufacturer_id"]: {"source": s["id"], "subject": None, "subtype": None}
+                    for s in results}
     except Exception as e:
-        print(f"   ⚠️  Cache error: {e}")
+        print(f"   Warning: Cache error: {e}")
     return {}
+
+
+def _resolve_subject_id(source_id: str, cache_entry: dict) -> str | None:
+    """Look up the subject linked to source_id and populate cache_entry."""
+    if cache_entry["subject"]:
+        return cache_entry["subject"]
+    try:
+        r = session.get(f"{ER_SITE}/api/v1.0/subjectsources/",
+                        params={"source": source_id, "page_size": 1})
+        if r.status_code == 200:
+            results = r.json().get("data", {}).get("results", []) or r.json().get("results", [])
+            if results:
+                subj = results[0].get("subject", {})
+                subj_id = subj.get("id") if isinstance(subj, dict) else subj
+                subj_type = subj.get("subject_subtype", DEFAULT_SUBTYPE) if isinstance(subj, dict) else DEFAULT_SUBTYPE
+                if subj_id:
+                    cache_entry["subject"] = subj_id
+                    cache_entry["subtype"] = subj_type
+                    return subj_id
+    except Exception:
+        pass
+    return None
 
 
 def get_group_id(group_name: str) -> str | None:
@@ -91,10 +114,22 @@ def add_to_group(group_id: str, subject_id: str, name: str):
 def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, group_id: str | None):
     """Upsert source + subject + assignment + group membership. Returns source_id or None."""
     if hex_code in cache:
-        return cache[hex_code]
+        entry = cache[hex_code]
+        # If we now see a specific (non-default) subtype that differs from what is registered,
+        # patch the ER subject so the icon updates (e.g. plane -> helicopter when A7 arrives).
+        if subtype != DEFAULT_SUBTYPE and entry["subtype"] != subtype:
+            subj_id = _resolve_subject_id(entry["source"], entry)
+            if subj_id:
+                r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
+                                  json={"subject_subtype": subtype})
+                if r.status_code in [200, 201]:
+                    name = callsign.strip() if callsign and callsign.strip() else f"ICAO-{hex_code.upper()}"
+                    print(f"   Updated {name}: subtype {entry['subtype'] or DEFAULT_SUBTYPE} -> {subtype}")
+                    entry["subtype"] = subtype
+        return entry["source"]
 
     name = callsign.strip() if callsign and callsign.strip() else f"ICAO-{hex_code.upper()}"
-    print(f"   ✈️  Registering: {name} ({hex_code})  subtype={subtype}")
+    print(f"   Registering: {name} ({hex_code})  subtype={subtype}")
 
     # 1. Create source (the ADS-B transponder)
     r = session.post(f"{ER_SITE}/api/v1.0/sources/", json={
@@ -124,6 +159,7 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
         "subject_subtype": subtype,
         "is_active":       True,
     })
+    subj_id = None
     if r2.status_code in [200, 201]:
         subj_id = r2.json().get("data", r2.json()).get("id")
 
@@ -138,9 +174,9 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
         if group_id:
             add_to_group(group_id, subj_id, name)
     else:
-        print(f"   ⚠️  Subject creation issue for {name}: {r2.text[:120]}")
+        print(f"   Warning: Subject creation issue for {name}: {r2.text[:120]}")
 
-    cache[hex_code] = source_id
+    cache[hex_code] = {"source": source_id, "subject": subj_id, "subtype": subtype}
     return source_id
 
 
