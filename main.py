@@ -9,9 +9,9 @@ try:
 except ImportError:
     pass  # dotenv optional; use environment variables or a .env file via shell
 
-ER_SITE   = os.environ.get("ER_SITE",   "https://your-site.pamdas.org")
+ER_SITE   = os.environ.get("ER_SITE")    # e.g. https://your-site.pamdas.org
 ER_TOKEN  = os.environ.get("ER_TOKEN")
-ADSB_URL  = os.environ.get("ADSB_URL",  "http://192.168.1.39:8080/data/aircraft.json")
+ADSB_URL  = os.environ.get("ADSB_URL",  "http://localhost:8080/data/aircraft.json")
 POLL_INTERVAL        = int(os.environ.get("POLL_INTERVAL",        "10"))   # seconds
 STALE_POS_THRESHOLD  = int(os.environ.get("STALE_POS_THRESHOLD",  "30"))   # seconds
 
