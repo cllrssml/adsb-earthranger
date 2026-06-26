@@ -1,7 +1,7 @@
 """
 compare_adsb.py - ADS-B source comparison: local receiver vs three cloud sources.
 
-Polls the local receiver, adsb.fi, airplanes.live, and OpenSky Network in every
+Polls the local receiver, adsb.lol, airplanes.live, and OpenSky Network in every
 cycle. Logs raw responses and per-cycle metrics — no EarthRanger posting, no
 credentials required to start.
 
@@ -41,7 +41,7 @@ OPENSKY_PASS    = ""            # add credentials here if you create an account 
 # Derived constants — do not edit below this line
 # ---------------------------------------------------------------------------
 
-RADIUS_NM = int(RADIUS_KM / 1.852)   # 200 km ~ 108 nm
+RADIUS_NM = int(RADIUS_KM / 1.852)   # 200 km ~ 107 nm
 
 _dlat = RADIUS_KM / 111.32
 _dlon = RADIUS_KM / (111.32 * math.cos(math.radians(abs(CFW_LAT))))
@@ -52,12 +52,12 @@ BBOX  = {
     "lomax": round(CFW_LON + _dlon, 4),
 }
 
-OPENSKY_URL = (
+OPENSKY_URL    = (
     "https://opensky-network.org/api/states/all"
     f"?lamin={BBOX['lamin']}&lomin={BBOX['lomin']}"
     f"&lamax={BBOX['lamax']}&lomax={BBOX['lomax']}"
 )
-ADSBFI_URL        = f"https://api.adsb.fi/v1/aircraft?lat={CFW_LAT}&lon={CFW_LON}&dist={RADIUS_NM}"
+ADSBLOL_URL       = f"https://api.adsb.lol/v2/lat/{CFW_LAT}/lon/{CFW_LON}/dist/{RADIUS_NM}"
 AIRPLANESLIVE_URL = f"https://api.airplanes.live/v2/point/{CFW_LAT}/{CFW_LON}/{RADIUS_NM}"
 
 # ---------------------------------------------------------------------------
@@ -67,19 +67,19 @@ AIRPLANESLIVE_URL = f"https://api.airplanes.live/v2/point/{CFW_LAT}/{CFW_LON}/{R
 CSV_COLUMNS = [
     "timestamp", "cycle",
     # fresh aircraft: positioned, age < STALE_THRESHOLD, airborne
-    "n_receiver", "n_adsb_fi", "n_airplanes_live", "n_opensky",
+    "n_receiver", "n_adsb_lol", "n_airplanes_live", "n_opensky",
     # on-ground count per source (logged but not included in fresh)
-    "gnd_receiver", "gnd_adsb_fi", "gnd_airplanes_live", "gnd_opensky",
+    "gnd_receiver", "gnd_adsb_lol", "gnd_airplanes_live", "gnd_opensky",
     # how many receiver aircraft are also seen by each cloud source
-    "rcvr_in_adsb_fi", "rcvr_in_airplanes_live", "rcvr_in_opensky",
+    "rcvr_in_adsb_lol", "rcvr_in_airplanes_live", "rcvr_in_opensky",
     # aircraft in a cloud source that are NOT in the receiver
-    "only_adsb_fi", "only_airplanes_live", "only_opensky",
+    "only_adsb_lol", "only_airplanes_live", "only_opensky",
     # average position age of fresh aircraft (seconds)
-    "avg_age_receiver", "avg_age_adsb_fi", "avg_age_airplanes_live", "avg_age_opensky",
+    "avg_age_receiver", "avg_age_adsb_lol", "avg_age_airplanes_live", "avg_age_opensky",
     # callsign completeness: % of fresh aircraft with a non-empty callsign
-    "pct_cs_receiver", "pct_cs_adsb_fi", "pct_cs_airplanes_live", "pct_cs_opensky",
+    "pct_cs_receiver", "pct_cs_adsb_lol", "pct_cs_airplanes_live", "pct_cs_opensky",
     # error messages (blank if ok)
-    "err_receiver", "err_adsb_fi", "err_airplanes_live", "err_opensky",
+    "err_receiver", "err_adsb_lol", "err_airplanes_live", "err_opensky",
 ]
 
 # ---------------------------------------------------------------------------
@@ -95,12 +95,11 @@ def fetch_receiver() -> tuple:
         return [], str(e)[:120]
 
 
-def fetch_adsbfi() -> tuple:
+def fetch_adsblol() -> tuple:
     try:
-        r = requests.get(ADSBFI_URL, timeout=10)
+        r = requests.get(ADSBLOL_URL, timeout=10)
         r.raise_for_status()
         d = r.json()
-        # adsb.fi returns {"ac": [...], "now": ..., "ctime": ...}
         return d.get("ac", d.get("aircraft", [])), ""
     except Exception as e:
         return [], str(e)[:120]
@@ -243,7 +242,7 @@ def log_raw(source: str, aircraft: list, ts: str):
 def print_cycle(cycle: int, elapsed_min: float, ts: str, r: dict, err: dict):
     sources = [
         ("receiver",       "Receiver      "),
-        ("adsb_fi",        "adsb.fi        "),
+        ("adsb_lol",       "adsb.lol       "),
         ("airplanes_live", "airplanes.live "),
         ("opensky",        "OpenSky        "),
     ]
@@ -281,7 +280,7 @@ def print_cycle(cycle: int, elapsed_min: float, ts: str, r: dict, err: dict):
 def main():
     print("ADS-B Source Comparison")
     print(f"  Receiver      : {RECEIVER_URL}")
-    print(f"  adsb.fi       : {ADSBFI_URL}")
+    print(f"  adsb.lol      : {ADSBLOL_URL}")
     print(f"  airplanes.live: {AIRPLANESLIVE_URL}")
     print(f"  OpenSky       : {OPENSKY_URL}")
     print(f"  Bbox          : lat [{BBOX['lamin']}, {BBOX['lamax']}]  "
@@ -302,25 +301,25 @@ def main():
             ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
             ac_recv, err_recv = fetch_receiver()
-            ac_adsb, err_adsb = fetch_adsbfi()
+            ac_adsb, err_adsb = fetch_adsblol()
             ac_air,  err_air  = fetch_airplaneslive()
             ac_osky, err_osky = fetch_opensky()
 
             for src, ac in [("receiver",       ac_recv),
-                            ("adsb_fi",        ac_adsb),
+                            ("adsb_lol",        ac_adsb),
                             ("airplanes_live", ac_air),
                             ("opensky",        ac_osky)]:
                 log_raw(src, ac, ts)
 
             r = {
                 "receiver":       analyse(ac_recv),
-                "adsb_fi":        analyse(ac_adsb),
+                "adsb_lol":        analyse(ac_adsb),
                 "airplanes_live": analyse(ac_air),
                 "opensky":        analyse(ac_osky),
             }
             err = {
                 "receiver":       err_recv,
-                "adsb_fi":        err_adsb,
+                "adsb_lol":        err_adsb,
                 "airplanes_live": err_air,
                 "opensky":        err_osky,
             }
@@ -330,29 +329,29 @@ def main():
                 "timestamp":              ts,
                 "cycle":                  cycle,
                 "n_receiver":             r["receiver"]["n"],
-                "n_adsb_fi":              r["adsb_fi"]["n"],
+                "n_adsb_lol":              r["adsb_lol"]["n"],
                 "n_airplanes_live":       r["airplanes_live"]["n"],
                 "n_opensky":              r["opensky"]["n"],
                 "gnd_receiver":           r["receiver"]["gnd"],
-                "gnd_adsb_fi":            r["adsb_fi"]["gnd"],
+                "gnd_adsb_lol":            r["adsb_lol"]["gnd"],
                 "gnd_airplanes_live":     r["airplanes_live"]["gnd"],
                 "gnd_opensky":            r["opensky"]["gnd"],
-                "rcvr_in_adsb_fi":        len(rcvr & r["adsb_fi"]["fresh_hexes"]),
+                "rcvr_in_adsb_lol":        len(rcvr & r["adsb_lol"]["fresh_hexes"]),
                 "rcvr_in_airplanes_live": len(rcvr & r["airplanes_live"]["fresh_hexes"]),
                 "rcvr_in_opensky":        len(rcvr & r["opensky"]["fresh_hexes"]),
-                "only_adsb_fi":           len(r["adsb_fi"]["fresh_hexes"] - rcvr),
+                "only_adsb_lol":           len(r["adsb_lol"]["fresh_hexes"] - rcvr),
                 "only_airplanes_live":    len(r["airplanes_live"]["fresh_hexes"] - rcvr),
                 "only_opensky":           len(r["opensky"]["fresh_hexes"] - rcvr),
                 "avg_age_receiver":       r["receiver"]["avg_age"],
-                "avg_age_adsb_fi":        r["adsb_fi"]["avg_age"],
+                "avg_age_adsb_lol":        r["adsb_lol"]["avg_age"],
                 "avg_age_airplanes_live": r["airplanes_live"]["avg_age"],
                 "avg_age_opensky":        r["opensky"]["avg_age"],
                 "pct_cs_receiver":        r["receiver"]["pct_cs"],
-                "pct_cs_adsb_fi":         r["adsb_fi"]["pct_cs"],
+                "pct_cs_adsb_lol":         r["adsb_lol"]["pct_cs"],
                 "pct_cs_airplanes_live":  r["airplanes_live"]["pct_cs"],
                 "pct_cs_opensky":         r["opensky"]["pct_cs"],
                 "err_receiver":           err_recv,
-                "err_adsb_fi":            err_adsb,
+                "err_adsb_lol":            err_adsb,
                 "err_airplanes_live":     err_air,
                 "err_opensky":            err_osky,
             })
