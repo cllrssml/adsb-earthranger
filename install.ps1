@@ -57,7 +57,7 @@ foreach ($cmd in @("python", "python3")) {
 }
 
 if (-not $python) {
-    Write-Warn "Python 3.10+ not found — installing Python 3.12 via winget..."
+    Write-Warn "Python 3.10+ not found -- installing Python 3.12 via winget..."
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-Fail "winget not available. Install Python 3.10+ manually from https://python.org then re-run."
     }
@@ -106,7 +106,7 @@ Expand-Archive -Path $zipPath -DestinationPath $tmpDir -Force
 
 # GitHub zips have a single top-level folder, e.g. adsb-earthranger-main/
 $inner = Get-ChildItem $tmpDir -Directory | Select-Object -First 1
-if (-not $inner) { Write-Fail "Unexpected zip layout — please report this issue." }
+if (-not $inner) { Write-Fail "Unexpected zip layout -- please report this issue." }
 
 # Preserve existing .env if present (upgrade scenario)
 $savedEnv = $null
@@ -138,7 +138,7 @@ Write-OK "Dependencies installed"
 $envFile = Join-Path $InstallDir ".env"
 
 if (Test-Path $envFile) {
-    Write-Step "Using existing .env — skipping configuration prompts"
+    Write-Step "Using existing .env -- skipping configuration prompts"
 } else {
     Write-Step "Configuration"
     Write-Host "  Enter your details. Press Enter to accept [defaults] where shown.`n" -ForegroundColor Gray
@@ -210,7 +210,7 @@ Register-ScheduledTask `
     -Settings  $settings `
     -Principal $principal | Out-Null
 
-Write-OK "Task '$taskName' registered — starts at boot, restarts on failure"
+Write-OK "Task '$taskName' registered -- starts at boot, restarts on failure"
 
 # ---------------------------------------------------------------------------
 # 8. Start immediately
