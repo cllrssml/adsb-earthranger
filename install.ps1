@@ -120,7 +120,7 @@ if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
 Move-Item $inner.FullName $InstallDir
 
 if ($savedEnv) {
-    [System.IO.File]::WriteAllText($envFile, $savedEnv, [System.Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($envFile, $savedEnv, [System.Text.UTF8Encoding]::new($false))
 }
 Write-OK "Files in place"
 
@@ -167,7 +167,7 @@ if (Test-Path $envFile) {
     if (-not $staleThreshold) { $staleThreshold = $staleDefault }
 
     $envContent = "ER_SITE=$erSite`r`nER_TOKEN=$erToken`r`nADSB_URL=$adsbUrl`r`nPOLL_INTERVAL=$pollInterval`r`nSTALE_POS_THRESHOLD=$staleThreshold`r`n"
-    [System.IO.File]::WriteAllText($envFile, $envContent, [System.Text.Encoding]::UTF8)
+    [System.IO.File]::WriteAllText($envFile, $envContent, [System.Text.UTF8Encoding]::new($false))
     Write-OK ".env written to $envFile"
 }
 
