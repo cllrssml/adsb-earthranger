@@ -116,10 +116,15 @@ if ((Test-Path $InstallDir) -and (Test-Path $envFile)) {
     Write-Warn "Existing .env preserved (delete it and re-run to reconfigure)"
 }
 
-# Kill any python/wscript process still holding output.log open before removing the directory.
+# Stop the scheduled task and kill all related processes before touching files.
+# Stop-ScheduledTask halts the entry but leaves child processes running:
+#   wscript.exe (run.vbs) -> cmd.exe (run.bat, holds output.log open) -> python.exe
+# We must kill all three; python.exe command line has no path so match by name only.
+Stop-ScheduledTask -TaskName "adsb-earthranger" -ErrorAction SilentlyContinue
+Stop-Process -Name python  -Force -ErrorAction SilentlyContinue
+Stop-Process -Name wscript -Force -ErrorAction SilentlyContinue
 Get-WmiObject Win32_Process | Where-Object {
-    ($_.Name -like "python*" -or $_.Name -like "wscript*") -and
-    $_.CommandLine -like "*$InstallDir*"
+    $_.Name -eq "cmd.exe" -and $_.CommandLine -like "*$InstallDir*"
 } | ForEach-Object {
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
 }
