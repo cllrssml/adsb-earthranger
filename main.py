@@ -86,30 +86,55 @@ def lookup_registration(hex_code: str) -> str | None:
 
 
 def get_er_cache() -> dict:
-    """Return {icao_hex: {"source": id, "subject": id_or_None, "subtype": str_or_None, ...}}."""
+    """Return {icao_hex: cache_entry dict}, with subject IDs pre-populated."""
+    cache = {}
+
+    # Step 1: load all ADS-B sources.
     try:
-        r = session.get(
-            f"{ER_SITE}/api/v1.0/sources/",
-            params={"provider": PROVIDER, "page_size": 1000},
-        )
-        if r.status_code == 200:
-            results = r.json().get("data", {}).get("results", []) or r.json().get("results", [])
-            # Initialise last_seen to now so existing subjects aren't retired immediately
-            # on startup before we've had a chance to observe them.
-            now = time.monotonic()
-            return {
-                s["manufacturer_id"]: {
-                    "source":    s["id"],
-                    "subject":   None,
-                    "subtype":   None,
-                    "last_seen": now,
-                    "er_active": True,
-                }
-                for s in results
-            }
+        r = session.get(f"{ER_SITE}/api/v1.0/sources/",
+                        params={"provider": PROVIDER, "page_size": 1000})
+        if r.status_code != 200:
+            print(f"   Warning: Sources fetch returned {r.status_code}")
+            return cache
+        results = r.json().get("data", {}).get("results", []) or r.json().get("results", [])
     except Exception as e:
-        print(f"   Warning: Cache error: {e}")
-    return {}
+        print(f"   Warning: Cache error loading sources: {e}")
+        return cache
+
+    now = time.monotonic()
+    source_uuid_to_hex = {}
+    for s in results:
+        cache[s["manufacturer_id"]] = {
+            "source":    s["id"],
+            "subject":   None,
+            "subtype":   None,
+            "last_seen": now,
+            "er_active": True,
+        }
+        source_uuid_to_hex[s["id"]] = s["manufacturer_id"]
+
+    # Step 2: bulk-load subjectsources so subject IDs are available immediately.
+    # This avoids per-aircraft API calls during retirement and ensures we patch
+    # the correct subject (not an unrelated one if the source filter is ignored).
+    try:
+        r2 = session.get(f"{ER_SITE}/api/v1.0/subjectsources/",
+                         params={"page_size": 4000})
+        if r2.status_code == 200:
+            ss_results = r2.json().get("data", {}).get("results", []) or r2.json().get("results", [])
+            for ss in ss_results:
+                src  = ss.get("source", {})
+                src_id = src.get("id") if isinstance(src, dict) else src
+                subj = ss.get("subject", {})
+                subj_id   = subj.get("id")          if isinstance(subj, dict) else subj
+                subj_type = subj.get("subject_subtype") if isinstance(subj, dict) else None
+                if src_id in source_uuid_to_hex and subj_id:
+                    hex_code = source_uuid_to_hex[src_id]
+                    cache[hex_code]["subject"] = subj_id
+                    cache[hex_code]["subtype"]  = subj_type or DEFAULT_SUBTYPE
+    except Exception as e:
+        print(f"   Warning: Cache error loading subjectsources: {e}")
+
+    return cache
 
 
 def _resolve_subject_id(source_id: str, cache_entry: dict) -> str | None:
