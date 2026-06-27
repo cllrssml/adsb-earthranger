@@ -340,8 +340,17 @@ def retire_stale_subjects(cache: dict, now: float):
             r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
                               json={"is_active": False}, timeout=10)
             if r.status_code in [200, 201]:
-                print(f"   Removed from map: ICAO-{hex_code.upper()} (not seen for {int(elapsed)}s)")
+                try:
+                    resp = r.json().get("data", r.json())
+                    is_active_after = resp.get("is_active", "?")
+                    name_after = resp.get("name", hex_code.upper())
+                except Exception:
+                    is_active_after = "?"
+                    name_after = hex_code.upper()
+                print(f"   Retire {name_after} ({hex_code.upper()}): HTTP {r.status_code}, is_active={is_active_after} (was unseen {int(elapsed)}s)")
                 entry["er_active"] = False
+            else:
+                print(f"   Warning: Retire failed for ICAO-{hex_code.upper()}: HTTP {r.status_code} {r.text[:80]}")
         except Exception as e:
             print(f"   Warning: Could not retire ICAO-{hex_code.upper()}: {e}")
 
