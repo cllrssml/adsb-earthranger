@@ -153,12 +153,13 @@ if (Test-Path $envFile) {
         if (-not $erToken) { Write-Host "  ER_TOKEN is required." -ForegroundColor Yellow }
     } while (-not $erToken)
 
-    $adsbDefault  = "http://192.168.1.39:8080/data/aircraft.json"
     $pollDefault  = "10"
     $staleDefault = "30"
 
-    $adsbUrl = (Read-Host "  ADSB_URL [$adsbDefault]").Trim()
-    if (-not $adsbUrl) { $adsbUrl = $adsbDefault }
+    do {
+        $adsbUrl = (Read-Host "  ADSB_URL  (e.g. http://192.168.x.x:8080/data/aircraft.json)").Trim()
+        if (-not $adsbUrl) { Write-Host "  ADSB_URL is required." -ForegroundColor Yellow }
+    } while (-not $adsbUrl)
 
     $pollInterval = (Read-Host "  POLL_INTERVAL seconds [$pollDefault]").Trim()
     if (-not $pollInterval) { $pollInterval = $pollDefault }

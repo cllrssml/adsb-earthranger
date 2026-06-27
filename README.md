@@ -130,8 +130,8 @@ cp .env.example .env
 When `CLOUD_LAT` and `CLOUD_LON` are set, the script will automatically switch to the configured cloud ADS-B source after `RECEIVER_FAIL_THRESHOLD` consecutive receiver failures, and switch back when the receiver recovers. To enable, add to your `.env`:
 
 ```
-CLOUD_LAT=-25.618290
-CLOUD_LON=31.008241
+CLOUD_LAT=<your-latitude>
+CLOUD_LON=<your-longitude>
 CLOUD_RADIUS_NM=107
 CLOUD_SOURCE=airplanes.live
 ```
@@ -150,25 +150,25 @@ Example output:
 
 ```
 ADS-B -> EarthRanger  starting up
-   Receiver : http://192.168.1.39:8080/data/aircraft.json
+   Receiver : http://192.168.x.x:8080/data/aircraft.json
    ER site  : https://your-site.pamdas.org
    Poll      : every 10s  |  stale threshold: 30s
    Inactive timeout: 300s (subjects removed from map after this long unseen)
-   Cloud fallback: airplanes.live  lat=-25.618290 lon=31.008241 r=107nm  (after 3 receiver failures)
+   Cloud fallback: airplanes.live  lat=-25.0 lon=31.0 r=107nm  (after 3 receiver failures)
    12 aircraft already known in ER
-   Subject group 'ADS-B' found (25a01b11-...)
+   Subject group 'ADS-B' found (xxxxxxxx-...)
 
 08:12:04
-   Registering: SAA189 (00af60)  subtype=plane
-   Added SAA189 to 'ADS-B' group
+   Registering: ABC123 (aabbcc)  subtype=plane
+   Added ABC123 to 'ADS-B' group
    3 observation(s) posted
 08:12:14
-   Updated ZS-HLJ: subtype plane -> helicopter
+   Updated XYZ456: subtype plane -> helicopter
    3 observation(s) posted
 08:12:25
    3 observation(s) posted
 08:17:40
-   Removed from map: ICAO-00AF60 (not seen for 312s)
+   Removed from map: ICAO-AABBCC (not seen for 312s)
 08:19:10
    Receiver unreachable (3 fails) -- switching to airplanes.live
    2 observation(s) posted

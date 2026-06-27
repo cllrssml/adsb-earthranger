@@ -5,6 +5,11 @@ Polls the local receiver, adsb.lol, airplanes.live, and OpenSky Network in every
 cycle. Logs raw responses and per-cycle metrics — no EarthRanger posting, no
 credentials required to start.
 
+Required environment variables (or edit the Configuration section below):
+  CENTER_LAT   Latitude of the centre of your search area (decimal degrees)
+  CENTER_LON   Longitude of the centre of your search area (decimal degrees)
+  RECEIVER_URL ADS-B receiver JSON endpoint (default: http://localhost:8080/data/aircraft.json)
+
 Usage:  python compare_adsb.py
 Stop:   Ctrl+C
 Output: comparison_output/comparison_log.csv
@@ -14,6 +19,8 @@ Output: comparison_output/comparison_log.csv
 import csv
 import json
 import math
+import os
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,14 +28,22 @@ from pathlib import Path
 import requests
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration — set via environment variables or edit here
 # ---------------------------------------------------------------------------
 
-RECEIVER_URL    = "http://192.168.1.39:8080/data/aircraft.json"
+RECEIVER_URL = os.environ.get("RECEIVER_URL", "http://localhost:8080/data/aircraft.json")
 
-CFW_LAT         = -25.618290
-CFW_LON         =  31.008241
-RADIUS_KM       = 200           # search radius for cloud sources
+_lat_env = os.environ.get("CENTER_LAT", "")
+_lon_env = os.environ.get("CENTER_LON", "")
+if not _lat_env or not _lon_env:
+    print("Error: CENTER_LAT and CENTER_LON must be set.")
+    print("  export CENTER_LAT=<decimal-latitude>")
+    print("  export CENTER_LON=<decimal-longitude>")
+    sys.exit(1)
+
+CENTER_LAT      = float(_lat_env)
+CENTER_LON      = float(_lon_env)
+RADIUS_KM       = int(os.environ.get("RADIUS_KM", "200"))   # search radius for cloud sources
 
 POLL_INTERVAL   = 30            # seconds between cycles (safe for OpenSky anonymous)
 STALE_THRESHOLD = 30            # positions older than this (seconds) are excluded
@@ -44,12 +59,12 @@ OPENSKY_PASS    = ""            # add credentials here if you create an account 
 RADIUS_NM = int(RADIUS_KM / 1.852)   # 200 km ~ 107 nm
 
 _dlat = RADIUS_KM / 111.32
-_dlon = RADIUS_KM / (111.32 * math.cos(math.radians(abs(CFW_LAT))))
+_dlon = RADIUS_KM / (111.32 * math.cos(math.radians(abs(CENTER_LAT))))
 BBOX  = {
-    "lamin": round(CFW_LAT - _dlat, 4),
-    "lamax": round(CFW_LAT + _dlat, 4),
-    "lomin": round(CFW_LON - _dlon, 4),
-    "lomax": round(CFW_LON + _dlon, 4),
+    "lamin": round(CENTER_LAT - _dlat, 4),
+    "lamax": round(CENTER_LAT + _dlat, 4),
+    "lomin": round(CENTER_LON - _dlon, 4),
+    "lomax": round(CENTER_LON + _dlon, 4),
 }
 
 OPENSKY_URL    = (
@@ -57,8 +72,8 @@ OPENSKY_URL    = (
     f"?lamin={BBOX['lamin']}&lomin={BBOX['lomin']}"
     f"&lamax={BBOX['lamax']}&lomax={BBOX['lomax']}"
 )
-ADSBLOL_URL       = f"https://api.adsb.lol/v2/lat/{CFW_LAT}/lon/{CFW_LON}/dist/{RADIUS_NM}"
-AIRPLANESLIVE_URL = f"https://api.airplanes.live/v2/point/{CFW_LAT}/{CFW_LON}/{RADIUS_NM}"
+ADSBLOL_URL       = f"https://api.adsb.lol/v2/lat/{CENTER_LAT}/lon/{CENTER_LON}/dist/{RADIUS_NM}"
+AIRPLANESLIVE_URL = f"https://api.airplanes.live/v2/point/{CENTER_LAT}/{CENTER_LON}/{RADIUS_NM}"
 
 # ---------------------------------------------------------------------------
 # CSV schema
