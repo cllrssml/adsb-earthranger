@@ -161,6 +161,9 @@ if (Test-Path $envFile) {
         $erSite = (Read-Host "  ER_SITE  (e.g. https://your-site.pamdas.org)").Trim()
         if (-not $erSite) { Write-Host "  ER_SITE is required." -ForegroundColor Yellow }
     } while (-not $erSite)
+    # Normalise: add https:// if user omitted the scheme
+    if ($erSite -notmatch "^https?://") { $erSite = "https://$erSite" }
+    $erSite = $erSite.TrimEnd("/")
 
     do {
         $erToken = (Read-Host "  ER_TOKEN (EarthRanger bearer token)").Trim()
