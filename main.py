@@ -114,38 +114,45 @@ def get_er_cache() -> dict:
         }
         source_uuid_to_hex[s["id"]] = s["manufacturer_id"]
 
-    # Step 2: bulk-load subjectsources and match them to ADS-B sources.
-    # Only accept aircraft subtypes — guards against matching non-aircraft subjects
-    # if the ER API returns unfiltered results for a source query.
+    # Step 2: paginate through all subjectsources to find subjects for our ADS-B sources.
+    # ER returns source/subject as plain UUID strings (not nested dicts), so we can
+    # only match by source UUID — but that's safe here because source_uuid_to_hex
+    # contains only ADS-B receiver sources. Stop early once all sources are matched.
     try:
-        r2 = session.get(f"{ER_SITE}/api/v1.0/subjectsources/",
-                         params={"page_size": 4000})
-        if r2.status_code == 200:
-            ss_results = r2.json().get("data", {}).get("results", []) or r2.json().get("results", [])
-            matched = 0
-            # Diagnostic: print structure of first subjectsource entry and a
-            # sample source UUID so we can see why matching might fail.
-            if ss_results:
-                sample = ss_results[0]
-                sample_src = sample.get("source", "(missing)")
-                sample_subj = sample.get("subject", "(missing)")
-                print(f"   [diag] ss[0].source type={type(sample_src).__name__} val={str(sample_src)[:120]}")
-                print(f"   [diag] ss[0].subject type={type(sample_subj).__name__} val={str(sample_subj)[:80]}")
-                if source_uuid_to_hex:
-                    sample_src_uuid = next(iter(source_uuid_to_hex))
-                    print(f"   [diag] sources[0] uuid={sample_src_uuid}")
-            for ss in ss_results:
+        remaining = set(source_uuid_to_hex.keys())
+        matched   = 0
+        page      = 1
+        page_size = 500
+        total_count = None
+        scanned   = 0
+        while remaining:
+            r2 = session.get(f"{ER_SITE}/api/v1.0/subjectsources/",
+                             params={"page_size": page_size, "page": page}, timeout=15)
+            if r2.status_code != 200:
+                break
+            data    = r2.json().get("data", r2.json())
+            results = data.get("results", [])
+            if total_count is None:
+                total_count = data.get("count", 0)
+            if not results:
+                break
+            scanned += len(results)
+            for ss in results:
                 src    = ss.get("source", {})
                 src_id = src.get("id") if isinstance(src, dict) else src
-                subj   = ss.get("subject", {})
-                subj_id   = subj.get("id")             if isinstance(subj, dict) else subj
-                subj_type = subj.get("subject_subtype") if isinstance(subj, dict) else None
-                if src_id in source_uuid_to_hex and subj_id and subj_type in AIRCRAFT_SUBTYPES:
+                if src_id not in remaining:
+                    continue
+                subj    = ss.get("subject", {})
+                subj_id = subj.get("id") if isinstance(subj, dict) else subj
+                if subj_id:
                     hex_code = source_uuid_to_hex[src_id]
                     cache[hex_code]["subject"] = subj_id
-                    cache[hex_code]["subtype"]  = subj_type
+                    remaining.discard(src_id)
                     matched += 1
-            print(f"   Subjectsources: {len(ss_results)} loaded, {matched} matched ADS-B aircraft")
+            if scanned >= (total_count or 0):
+                break
+            page += 1
+        print(f"   Subjectsources: {scanned} scanned ({total_count or '?'} total), {matched} matched ADS-B aircraft")
     except Exception as e:
         print(f"   Warning: Cache error loading subjectsources: {e}")
 
