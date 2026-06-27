@@ -123,6 +123,17 @@ def get_er_cache() -> dict:
         if r2.status_code == 200:
             ss_results = r2.json().get("data", {}).get("results", []) or r2.json().get("results", [])
             matched = 0
+            # Diagnostic: print structure of first subjectsource entry and a
+            # sample source UUID so we can see why matching might fail.
+            if ss_results:
+                sample = ss_results[0]
+                sample_src = sample.get("source", "(missing)")
+                sample_subj = sample.get("subject", "(missing)")
+                print(f"   [diag] ss[0].source type={type(sample_src).__name__} val={str(sample_src)[:120]}")
+                print(f"   [diag] ss[0].subject type={type(sample_subj).__name__} val={str(sample_subj)[:80]}")
+                if source_uuid_to_hex:
+                    sample_src_uuid = next(iter(source_uuid_to_hex))
+                    print(f"   [diag] sources[0] uuid={sample_src_uuid}")
             for ss in ss_results:
                 src    = ss.get("source", {})
                 src_id = src.get("id") if isinstance(src, dict) else src
