@@ -116,6 +116,15 @@ if ((Test-Path $InstallDir) -and (Test-Path $envFile)) {
     Write-Warn "Existing .env preserved (delete it and re-run to reconfigure)"
 }
 
+# Kill any python/wscript process still holding output.log open before removing the directory.
+Get-WmiObject Win32_Process | Where-Object {
+    ($_.Name -like "python*" -or $_.Name -like "wscript*") -and
+    $_.CommandLine -like "*$InstallDir*"
+} | ForEach-Object {
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+}
+Start-Sleep -Seconds 2
+
 if (Test-Path $InstallDir) { Remove-Item $InstallDir -Recurse -Force }
 Move-Item $inner.FullName $InstallDir
 
