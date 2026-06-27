@@ -106,26 +106,28 @@ def get_er_cache() -> dict:
     source_uuid_to_hex = {}
     for s in results:
         cache[s["manufacturer_id"]] = {
-            "source":    s["id"],
-            "subject":   None,
-            "subtype":   None,
-            "last_seen": now,
-            "er_active": True,
+            "source":         s["id"],
+            "subject":        None,   # primary subject UUID
+            "subject_extras": [],     # additional subjects linked to same source (duplicates)
+            "subtype":        None,
+            "last_seen":      now,
+            "er_active":      True,
         }
         source_uuid_to_hex[s["id"]] = s["manufacturer_id"]
 
-    # Step 2: paginate through all subjectsources to find subjects for our ADS-B sources.
-    # ER returns source/subject as plain UUID strings (not nested dicts), so we can
-    # only match by source UUID — but that's safe here because source_uuid_to_hex
-    # contains only ADS-B receiver sources. Stop early once all sources are matched.
+    # Step 2: paginate through ALL subjectsources to find every subject linked to
+    # our ADS-B sources. Must scan all pages because ER doesn't support filtering
+    # subjectsources by source UUID. A single source can have multiple subjects
+    # (duplicates from prior bugs) — we collect all so retirement clears every one.
     try:
-        remaining = set(source_uuid_to_hex.keys())
+        ads_b_src_set = set(source_uuid_to_hex.keys())
         matched   = 0
+        dupes     = 0
         page      = 1
         page_size = 500
         total_count = None
         scanned   = 0
-        while remaining:
+        while True:
             r2 = session.get(f"{ER_SITE}/api/v1.0/subjectsources/",
                              params={"page_size": page_size, "page": page}, timeout=15)
             if r2.status_code != 200:
@@ -140,19 +142,24 @@ def get_er_cache() -> dict:
             for ss in results:
                 src    = ss.get("source", {})
                 src_id = src.get("id") if isinstance(src, dict) else src
-                if src_id not in remaining:
+                if src_id not in ads_b_src_set:
                     continue
                 subj    = ss.get("subject", {})
                 subj_id = subj.get("id") if isinstance(subj, dict) else subj
-                if subj_id:
-                    hex_code = source_uuid_to_hex[src_id]
+                if not subj_id:
+                    continue
+                hex_code = source_uuid_to_hex[src_id]
+                if cache[hex_code]["subject"] is None:
                     cache[hex_code]["subject"] = subj_id
-                    remaining.discard(src_id)
                     matched += 1
+                elif subj_id != cache[hex_code]["subject"]:
+                    cache[hex_code]["subject_extras"].append(subj_id)
+                    dupes += 1
             if scanned >= (total_count or 0):
                 break
             page += 1
-        print(f"   Subjectsources: {scanned} scanned ({total_count or '?'} total), {matched} matched ADS-B aircraft")
+        dupe_str = f", {dupes} duplicate(s) found" if dupes else ""
+        print(f"   Subjectsources: {scanned} scanned ({total_count or '?'} total), {matched} matched ADS-B aircraft{dupe_str}")
     except Exception as e:
         print(f"   Warning: Cache error loading subjectsources: {e}")
 
@@ -396,26 +403,27 @@ def retire_stale_subjects(cache: dict, now: float):
         elapsed = now - last_seen
         if elapsed < INACTIVE_TIMEOUT:
             continue
-        subj_id = entry.get("subject")  # only use pre-resolved IDs
-        if not subj_id:
+        subj_ids = [s for s in [entry.get("subject")] + entry.get("subject_extras", []) if s]
+        if not subj_ids:
             continue
-        try:
-            r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
-                              json={"is_active": False}, timeout=10)
-            if r.status_code in [200, 201]:
-                try:
-                    resp = r.json().get("data", r.json())
-                    is_active_after = resp.get("is_active", "?")
-                    name_after = resp.get("name", hex_code.upper())
-                except Exception:
-                    is_active_after = "?"
-                    name_after = hex_code.upper()
-                print(f"   Retire {name_after} ({hex_code.upper()}): HTTP {r.status_code}, is_active={is_active_after} (was unseen {int(elapsed)}s)")
-                entry["er_active"] = False
-            else:
-                print(f"   Warning: Retire failed for ICAO-{hex_code.upper()}: HTTP {r.status_code} {r.text[:80]}")
-        except Exception as e:
-            print(f"   Warning: Could not retire ICAO-{hex_code.upper()}: {e}")
+        for subj_id in subj_ids:
+            try:
+                r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
+                                  json={"is_active": False}, timeout=10)
+                if r.status_code in [200, 201]:
+                    try:
+                        resp = r.json().get("data", r.json())
+                        is_active_after = resp.get("is_active", "?")
+                        name_after = resp.get("name", hex_code.upper())
+                    except Exception:
+                        is_active_after = "?"
+                        name_after = hex_code.upper()
+                    print(f"   Retire {name_after} ({hex_code.upper()}): HTTP {r.status_code}, is_active={is_active_after} (was unseen {int(elapsed)}s)")
+                else:
+                    print(f"   Warning: Retire failed for ICAO-{hex_code.upper()}: HTTP {r.status_code} {r.text[:80]}")
+            except Exception as e:
+                print(f"   Warning: Could not retire ICAO-{hex_code.upper()}: {e}")
+        entry["er_active"] = False
 
 
 def run_sync(cache: dict, group_id: str | None) -> int:
