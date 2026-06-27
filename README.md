@@ -19,13 +19,24 @@ Designed for conservation operations centres that run an ADS-B receiver on-site 
 Every 10 seconds the script:
 
 1. Fetches the live aircraft JSON from the receiver (or cloud fallback if the receiver is down)
-2. Filters out aircraft with no position fix or a stale fix (> 30 s)
-3. For each **new** aircraft: auto-registers a Source, Subject, and SubjectSource link in EarthRanger and adds it to the **ADS-B** subject group
-4. For all visible aircraft: posts an Observation (position + altitude, speed, heading, climb rate, squawk)
-5. **Removes from map**: any aircraft not seen for `INACTIVE_TIMEOUT` seconds is patched `is_active: false` in EarthRanger so it disappears from the live map
-6. **Reactivates**: if a removed aircraft reappears it is patched back to `is_active: true` immediately
+2. Filters out aircraft with no position fix or a stale fix (> `STALE_POS_THRESHOLD` seconds)
+3. For each **new** aircraft: resolves a display name, then auto-registers a Source, Subject, and SubjectSource link in EarthRanger and adds it to the **ADS-B** subject group
+4. For all visible aircraft: posts an Observation with position, altitude, ground speed, heading, climb rate, squawk, and ADS-B category
+5. **Auto-corrects aircraft type**: if an aircraft's ADS-B transponder category changes (e.g. we learn it is a helicopter after initially registering it as a plane), the EarthRanger subject subtype and map icon are updated automatically
+6. **Removes from map**: any aircraft not seen for `INACTIVE_TIMEOUT` seconds is patched `is_active: false` in EarthRanger so it disappears from the live map
+7. **Reactivates**: if a removed aircraft reappears it is patched back to `is_active: true` immediately
 
-Aircraft are identified by their ICAO 24-bit hex address and named by callsign when available.
+### Aircraft naming
+
+Aircraft are identified by their ICAO 24-bit hex address. The display name is resolved in this order:
+
+1. **ADS-B callsign** — used when the aircraft broadcasts one (e.g. `QTR1375`)
+2. **adsbdb.com lookup** — if no callsign is broadcast, the ICAO hex is queried against the [adsbdb.com](https://www.adsbdb.com) public aircraft database to retrieve the civil registration (e.g. `ZS-SXD`). Results are cached per session so each aircraft is looked up at most once.
+3. **ICAO hex fallback** — if adsbdb has no record, the subject is named `ICAO-<HEX>` (e.g. `ICAO-00B1F2`)
+
+### Startup
+
+On startup the script loads all existing ADS-B sources and their linked EarthRanger subjects. This avoids re-registering aircraft already in ER and allows map retirement to work immediately for aircraft tracked in a previous session. On a large ER instance this may take 10–20 seconds as it pages through all subject-source records.
 
 ---
 
@@ -155,25 +166,34 @@ ADS-B -> EarthRanger  starting up
    Poll      : every 10s  |  stale threshold: 30s
    Inactive timeout: 300s (subjects removed from map after this long unseen)
    Cloud fallback: airplanes.live  lat=-25.0 lon=31.0 r=107nm  (after 3 receiver failures)
+   Subjectsources: 4500 scanned (4500 total), 12 matched ADS-B aircraft
    12 aircraft already known in ER
    Subject group 'ADS-B' found (xxxxxxxx-...)
 
 08:12:04
-   Registering: ABC123 (aabbcc)  subtype=plane
+   Registering: ABC123 (aabbcc)  subtype=plane        ← has callsign
    Added ABC123 to 'ADS-B' group
+   Registering: ZS-XYZ (001234)  subtype=plane        ← no callsign; name from adsbdb.com
+   Added ZS-XYZ to 'ADS-B' group
+   Registering: ICAO-00B1F2 (00b1f2)  subtype=plane   ← no callsign, not in adsbdb
+   Added ICAO-00B1F2 to 'ADS-B' group
    3 observation(s) posted
 08:12:14
-   Updated XYZ456: subtype plane -> helicopter
+   Updated ABC123: subtype plane -> helicopter         ← ADS-B category updated; icon changes
    3 observation(s) posted
 08:12:25
    3 observation(s) posted
 08:17:40
-   Removed from map: ICAO-AABBCC (not seen for 312s)
+   Retire ZS-XYZ (001234): HTTP 200, is_active=False (was unseen 312s)
+   3 observation(s) posted
 08:19:10
    Receiver unreachable (3 fails) -- switching to airplanes.live
    2 observation(s) posted
 08:25:30
    Receiver restored -- switching back from airplanes.live
+   3 observation(s) posted
+08:31:05
+   Reactivated on map: ZS-XYZ                         ← aircraft reappeared
    3 observation(s) posted
 ```
 
