@@ -42,7 +42,8 @@ CATEGORY_SUBTYPES = {
     "B2": "hot_air_balloon", # Lighter than air
     "B6": "drone",           # UAV/drone with ADS-B transmitter
 }
-DEFAULT_SUBTYPE = "plane"  # fixed-wing: covers A1-A6, B1, B4 etc.
+DEFAULT_SUBTYPE   = "plane"  # fixed-wing: covers A1-A6, B1, B4 etc.
+AIRCRAFT_SUBTYPES = {"plane", "helicopter", "drone", "hot_air_balloon"}
 
 ADSBDB_URL = "https://api.adsbdb.com/v0/aircraft/{hex}"
 
@@ -113,24 +114,27 @@ def get_er_cache() -> dict:
         }
         source_uuid_to_hex[s["id"]] = s["manufacturer_id"]
 
-    # Step 2: bulk-load subjectsources so subject IDs are available immediately.
-    # This avoids per-aircraft API calls during retirement and ensures we patch
-    # the correct subject (not an unrelated one if the source filter is ignored).
+    # Step 2: bulk-load subjectsources and match them to ADS-B sources.
+    # Only accept aircraft subtypes — guards against matching non-aircraft subjects
+    # if the ER API returns unfiltered results for a source query.
     try:
         r2 = session.get(f"{ER_SITE}/api/v1.0/subjectsources/",
                          params={"page_size": 4000})
         if r2.status_code == 200:
             ss_results = r2.json().get("data", {}).get("results", []) or r2.json().get("results", [])
+            matched = 0
             for ss in ss_results:
-                src  = ss.get("source", {})
+                src    = ss.get("source", {})
                 src_id = src.get("id") if isinstance(src, dict) else src
-                subj = ss.get("subject", {})
-                subj_id   = subj.get("id")          if isinstance(subj, dict) else subj
+                subj   = ss.get("subject", {})
+                subj_id   = subj.get("id")             if isinstance(subj, dict) else subj
                 subj_type = subj.get("subject_subtype") if isinstance(subj, dict) else None
-                if src_id in source_uuid_to_hex and subj_id:
+                if src_id in source_uuid_to_hex and subj_id and subj_type in AIRCRAFT_SUBTYPES:
                     hex_code = source_uuid_to_hex[src_id]
                     cache[hex_code]["subject"] = subj_id
-                    cache[hex_code]["subtype"]  = subj_type or DEFAULT_SUBTYPE
+                    cache[hex_code]["subtype"]  = subj_type
+                    matched += 1
+            print(f"   Subjectsources: {len(ss_results)} loaded, {matched} matched ADS-B aircraft")
     except Exception as e:
         print(f"   Warning: Cache error loading subjectsources: {e}")
 
@@ -138,7 +142,12 @@ def get_er_cache() -> dict:
 
 
 def _resolve_subject_id(source_id: str, cache_entry: dict) -> str | None:
-    """Look up the subject linked to source_id and populate cache_entry."""
+    """Look up the subject linked to source_id and populate cache_entry.
+
+    Only caches/returns IDs for aircraft subjects. The ER subjectsources API
+    may return unfiltered results for a given source filter, so we guard against
+    accidentally resolving to a non-aircraft subject (e.g. a person or vehicle).
+    """
     if cache_entry["subject"]:
         return cache_entry["subject"]
     try:
@@ -148,9 +157,9 @@ def _resolve_subject_id(source_id: str, cache_entry: dict) -> str | None:
             results = r.json().get("data", {}).get("results", []) or r.json().get("results", [])
             if results:
                 subj = results[0].get("subject", {})
-                subj_id = subj.get("id") if isinstance(subj, dict) else subj
-                subj_type = subj.get("subject_subtype", DEFAULT_SUBTYPE) if isinstance(subj, dict) else DEFAULT_SUBTYPE
-                if subj_id:
+                subj_id   = subj.get("id")             if isinstance(subj, dict) else subj
+                subj_type = subj.get("subject_subtype") if isinstance(subj, dict) else None
+                if subj_id and subj_type in AIRCRAFT_SUBTYPES:
                     cache_entry["subject"] = subj_id
                     cache_entry["subtype"] = subj_type
                     return subj_id
@@ -194,6 +203,11 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
     """Upsert source + subject + assignment + group membership. Returns source_id or None."""
     if hex_code in cache:
         entry = cache[hex_code]
+
+        # Resolve subject ID now if not yet known — safe here because we know this
+        # is an ADS-B source, and _resolve_subject_id guards against non-aircraft types.
+        if not entry["subject"]:
+            _resolve_subject_id(entry["source"], entry)
 
         # Reactivate on map if it was previously retired.
         if not entry.get("er_active", True):
@@ -348,7 +362,13 @@ def fetch_aircraft() -> list[dict]:
 
 
 def retire_stale_subjects(cache: dict, now: float):
-    """Patch is_active=False in ER for aircraft not seen for INACTIVE_TIMEOUT seconds."""
+    """Patch is_active=False in ER for aircraft not seen for INACTIVE_TIMEOUT seconds.
+
+    Only retires subjects whose ID is already known in cache. Never queries the
+    subjectsources API here — that API does not reliably filter by source and
+    could return an unrelated subject (e.g. a person tracked in the same ER site).
+    Subject IDs are populated by ensure_aircraft when an aircraft is first observed.
+    """
     for hex_code, entry in cache.items():
         if not entry.get("er_active", True):
             continue  # already inactive
@@ -358,7 +378,7 @@ def retire_stale_subjects(cache: dict, now: float):
         elapsed = now - last_seen
         if elapsed < INACTIVE_TIMEOUT:
             continue
-        subj_id = _resolve_subject_id(entry["source"], entry)
+        subj_id = entry.get("subject")  # only use pre-resolved IDs
         if not subj_id:
             continue
         try:
