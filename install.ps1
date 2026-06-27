@@ -223,8 +223,8 @@ $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable
 
 $principal = New-ScheduledTaskPrincipal `
-    -UserId    $env:USERNAME `
-    -LogonType Interactive `
+    -UserId    "SYSTEM" `
+    -LogonType ServiceAccount `
     -RunLevel  Highest
 
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue

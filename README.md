@@ -203,6 +203,8 @@ ADS-B -> EarthRanger  starting up
 
 Use the **Quick install** script above — it handles everything automatically.
 
+The Task Scheduler task runs as the **SYSTEM** account so the script starts at boot regardless of whether a user is logged in. No auto-login configuration is required.
+
 To update to a newer version, re-run the installer. Your `.env` is preserved automatically.
 
 ### Option B — NSSM (alternative to Task Scheduler)
