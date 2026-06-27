@@ -14,7 +14,7 @@ try:
     from dotenv import load_dotenv
     # Load .env from the script's own directory so Task Scheduler / NSSM
     # deployments work regardless of working directory at launch.
-    load_dotenv(Path(__file__).parent / ".env", encoding="utf-8-sig")
+    load_dotenv(Path(__file__).parent / ".env", encoding="utf-8-sig", override=True)
 except ImportError:
     pass  # dotenv optional; use environment variables or a .env file via shell
 
