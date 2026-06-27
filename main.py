@@ -151,14 +151,18 @@ def get_group_id(group_name: str) -> str | None:
 
 
 def add_to_group(group_id: str, subject_id: str, name: str):
-    r = session.post(
-        f"{ER_SITE}/api/v1.0/subjectgroup/{group_id}/subjects/",
-        json=[{"id": subject_id}],
-    )
-    if r.status_code in [200, 201]:
-        print(f"   Added {name} to '{SUBJECT_GROUP}' group")
-    else:
-        print(f"   Warning: Group add failed for {name}: {r.status_code} {r.text[:80]}")
+    try:
+        r = session.post(
+            f"{ER_SITE}/api/v1.0/subjectgroup/{group_id}/subjects/",
+            json=[{"id": subject_id}],
+            timeout=10,
+        )
+        if r.status_code in [200, 201]:
+            print(f"   Added {name} to '{SUBJECT_GROUP}' group")
+        else:
+            print(f"   Warning: Group add failed for {name}: {r.status_code} {r.text[:80]}")
+    except Exception as e:
+        print(f"   Warning: Group add error for {name}: {e}")
 
 
 def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, group_id: str | None):
@@ -170,24 +174,30 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
         if not entry.get("er_active", True):
             subj_id = _resolve_subject_id(entry["source"], entry)
             if subj_id:
-                r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
-                                  json={"is_active": True})
-                if r.status_code in [200, 201]:
-                    name = callsign.strip() if callsign and callsign.strip() else f"ICAO-{hex_code.upper()}"
-                    print(f"   Reactivated on map: {name}")
-                    entry["er_active"] = True
+                try:
+                    r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
+                                      json={"is_active": True}, timeout=10)
+                    if r.status_code in [200, 201]:
+                        name = callsign.strip() if callsign and callsign.strip() else f"ICAO-{hex_code.upper()}"
+                        print(f"   Reactivated on map: {name}")
+                        entry["er_active"] = True
+                except Exception as e:
+                    print(f"   Warning: Reactivation failed for ICAO-{hex_code.upper()}: {e}")
 
         # If we now see a specific (non-default) subtype that differs from what is registered,
         # patch the ER subject so the icon updates (e.g. plane -> helicopter when A7 arrives).
         if subtype != DEFAULT_SUBTYPE and entry["subtype"] != subtype:
             subj_id = _resolve_subject_id(entry["source"], entry)
             if subj_id:
-                r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
-                                  json={"subject_subtype": subtype})
-                if r.status_code in [200, 201]:
-                    name = callsign.strip() if callsign and callsign.strip() else f"ICAO-{hex_code.upper()}"
-                    print(f"   Updated {name}: subtype {entry['subtype'] or DEFAULT_SUBTYPE} -> {subtype}")
-                    entry["subtype"] = subtype
+                try:
+                    r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
+                                      json={"subject_subtype": subtype}, timeout=10)
+                    if r.status_code in [200, 201]:
+                        name = callsign.strip() if callsign and callsign.strip() else f"ICAO-{hex_code.upper()}"
+                        print(f"   Updated {name}: subtype {entry['subtype'] or DEFAULT_SUBTYPE} -> {subtype}")
+                        entry["subtype"] = subtype
+                except Exception as e:
+                    print(f"   Warning: Subtype update failed for ICAO-{hex_code.upper()}: {e}")
 
         return entry["source"]
 
@@ -199,43 +209,62 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
     print(f"   Registering: {name} ({hex_code})  subtype={subtype}")
 
     # 1. Create source (the ADS-B transponder)
-    r = session.post(f"{ER_SITE}/api/v1.0/sources/", json={
-        "manufacturer_id": hex_code,
-        "source_type":     "tracking-device",
-        "model_name":      "ADS-B Transponder",
-        "provider":        PROVIDER,
-        "additional":      {},
-    })
+    try:
+        r = session.post(f"{ER_SITE}/api/v1.0/sources/", json={
+            "manufacturer_id": hex_code,
+            "source_type":     "tracking-device",
+            "model_name":      "ADS-B Transponder",
+            "provider":        PROVIDER,
+            "additional":      {},
+        }, timeout=10)
+    except Exception as e:
+        print(f"   Error creating source for {hex_code}: {e}")
+        return None
+
     source_id = None
     if r.status_code in [200, 201]:
         source_id = r.json().get("data", r.json()).get("id")
     elif "already exists" in r.text:
-        l = session.get(f"{ER_SITE}/api/v1.0/sources/", params={"provider": PROVIDER, "manufacturer_id": hex_code})
-        if l.status_code == 200:
-            res = l.json().get("data", {}).get("results", []) or l.json().get("results", [])
-            if res:
-                source_id = res[0]["id"]
+        try:
+            l = session.get(f"{ER_SITE}/api/v1.0/sources/",
+                            params={"provider": PROVIDER, "manufacturer_id": hex_code}, timeout=10)
+            if l.status_code == 200:
+                res = l.json().get("data", {}).get("results", []) or l.json().get("results", [])
+                if res:
+                    source_id = res[0]["id"]
+        except Exception as e:
+            print(f"   Error looking up existing source for {hex_code}: {e}")
 
     if not source_id:
         print(f"   Could not create/find source for {hex_code}: {r.text[:120]}")
         return None
 
     # 2. Create subject (subject_type is readOnly — ER derives it from subtype)
-    r2 = session.post(f"{ER_SITE}/api/v1.0/subjects/", json={
-        "name":            name,
-        "subject_subtype": subtype,
-        "is_active":       True,
-    })
+    try:
+        r2 = session.post(f"{ER_SITE}/api/v1.0/subjects/", json={
+            "name":            name,
+            "subject_subtype": subtype,
+            "is_active":       True,
+        }, timeout=10)
+    except Exception as e:
+        print(f"   Error creating subject for {name}: {e}")
+        cache[hex_code] = {"source": source_id, "subject": None, "subtype": subtype,
+                           "last_seen": time.monotonic(), "er_active": True}
+        return source_id
+
     subj_id = None
     if r2.status_code in [200, 201]:
         subj_id = r2.json().get("data", r2.json()).get("id")
 
         # 3. Link source → subject
-        session.post(f"{ER_SITE}/api/v1.0/subject/{subj_id}/sources/", json={
-            "source":         source_id,
-            "assigned_range": {"lower": "2000-01-01T00:00:00Z", "upper": "2099-01-01T00:00:00Z"},
-            "additional":     {},
-        })
+        try:
+            session.post(f"{ER_SITE}/api/v1.0/subject/{subj_id}/sources/", json={
+                "source":         source_id,
+                "assigned_range": {"lower": "2000-01-01T00:00:00Z", "upper": "2099-01-01T00:00:00Z"},
+                "additional":     {},
+            }, timeout=10)
+        except Exception as e:
+            print(f"   Warning: Source-subject link failed for {name}: {e}")
 
         # 4. Add to ADS-B subject group
         if group_id:
@@ -307,11 +336,14 @@ def retire_stale_subjects(cache: dict, now: float):
         subj_id = _resolve_subject_id(entry["source"], entry)
         if not subj_id:
             continue
-        r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
-                          json={"is_active": False})
-        if r.status_code in [200, 201]:
-            print(f"   Removed from map: ICAO-{hex_code.upper()} (not seen for {int(elapsed)}s)")
-            entry["er_active"] = False
+        try:
+            r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
+                              json={"is_active": False}, timeout=10)
+            if r.status_code in [200, 201]:
+                print(f"   Removed from map: ICAO-{hex_code.upper()} (not seen for {int(elapsed)}s)")
+                entry["er_active"] = False
+        except Exception as e:
+            print(f"   Warning: Could not retire ICAO-{hex_code.upper()}: {e}")
 
 
 def run_sync(cache: dict, group_id: str | None) -> int:
@@ -359,16 +391,19 @@ def run_sync(cache: dict, group_id: str | None) -> int:
             if src_key in a:
                 additional[dst_key] = a[src_key]
 
-        p = session.post(f"{ER_SITE}/api/v1.0/observations/", json={
-            "source":      source_id,
-            "location":    {"latitude": a["lat"], "longitude": a["lon"]},
-            "recorded_at": recorded_at,
-            "additional":  additional,
-        })
-        if p.status_code in [200, 201]:
-            count += 1
-        else:
-            print(f"   Observation failed for {hex_code}: {p.status_code} {p.text[:80]}")
+        try:
+            p = session.post(f"{ER_SITE}/api/v1.0/observations/", json={
+                "source":      source_id,
+                "location":    {"latitude": a["lat"], "longitude": a["lon"]},
+                "recorded_at": recorded_at,
+                "additional":  additional,
+            }, timeout=10)
+            if p.status_code in [200, 201]:
+                count += 1
+            else:
+                print(f"   Observation failed for {hex_code}: {p.status_code} {p.text[:80]}")
+        except Exception as e:
+            print(f"   Observation error for {hex_code}: {e}")
 
     retire_stale_subjects(cache, now)
     return count
