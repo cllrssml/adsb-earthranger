@@ -173,12 +173,20 @@ if (Test-Path $envFile) {
 }
 
 # ---------------------------------------------------------------------------
-# 6. Write run.bat (avoids complex quoting in Task Scheduler argument)
+# 6. Write run.bat and run.vbs
 # ---------------------------------------------------------------------------
 $batFile = Join-Path $InstallDir "run.bat"
 $batContent = "@echo off`r`ncd /d `"$InstallDir`"`r`n`"$python`" -u main.py >> `"$InstallDir\output.log`" 2>&1`r`n"
 [System.IO.File]::WriteAllText($batFile, $batContent, [System.Text.Encoding]::ASCII)
 Write-OK "run.bat written"
+
+# VBScript wrapper launches run.bat with a hidden window so no cmd console
+# appears on the desktop. wscript.exe blocks until the script exits, which
+# lets Task Scheduler track the process lifetime and restart on failure.
+$vbsFile = Join-Path $InstallDir "run.vbs"
+$vbsContent = "Dim wsh`r`nSet wsh = CreateObject(`"WScript.Shell`")`r`nwsh.Run Chr(34) & `"$batFile`" & Chr(34), 0, True`r`nSet wsh = Nothing`r`n"
+[System.IO.File]::WriteAllText($vbsFile, $vbsContent, [System.Text.Encoding]::ASCII)
+Write-OK "run.vbs written"
 
 # ---------------------------------------------------------------------------
 # 7. Register Task Scheduler task
@@ -187,7 +195,7 @@ Write-Step "Registering Windows Task Scheduler task..."
 $taskName = "adsb-earthranger"
 $logFile  = "$InstallDir\output.log"
 
-$action = New-ScheduledTaskAction -Execute $batFile
+$action = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$vbsFile`""
 
 $trigger = New-ScheduledTaskTrigger -AtStartup
 
