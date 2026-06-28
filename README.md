@@ -36,7 +36,9 @@ Aircraft are identified by their ICAO 24-bit hex address. The display name is re
 
 ### Startup
 
-On startup the script loads all existing ADS-B sources and their linked EarthRanger subjects. This avoids re-registering aircraft already in ER and allows map retirement to work immediately for aircraft tracked in a previous session. On a large ER instance this may take 10–20 seconds as it pages through all subject-source records.
+On startup the script loads all existing ADS-B sources and their linked EarthRanger subjects. This avoids re-registering aircraft already in ER and allows map retirement to work immediately for aircraft tracked in a previous session.
+
+> **Note:** On large EarthRanger instances with tens of thousands of subject-source records, this initial scan can take several minutes. The script is not frozen — it is paging through ER's subject-source records in the background. Wait for the `Subjectsources: X scanned` line in the log before assuming something is wrong.
 
 ---
 
