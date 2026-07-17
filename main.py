@@ -111,7 +111,11 @@ def get_er_cache() -> dict:
             "subject_extras": [],     # additional subjects linked to same source (duplicates)
             "subtype":        None,
             "last_seen":      now,
-            "er_active":      True,
+            # Unknown at startup — we don't know ER's current is_active for a
+            # subject we already knew about before this process started. Left
+            # as None (not True) so the next sighting re-asserts is_active=True
+            # instead of silently trusting a stale in-memory guess.
+            "er_active":      None,
         }
         source_uuid_to_hex[s["id"]] = s["manufacturer_id"]
 
@@ -193,6 +197,21 @@ def _resolve_subject_id(source_id: str, cache_entry: dict) -> str | None:
     return None
 
 
+def _get_live_active(subj_id: str) -> bool | None:
+    """Fetch ER's actual current is_active for a subject. Returns None if the
+    check itself fails — callers should treat that as "still unknown" and
+    retry later, rather than guessing.
+    """
+    try:
+        r = session.get(f"{ER_SITE}/api/v1.0/subject/{subj_id}/", timeout=10)
+        if r.status_code == 200:
+            data = r.json().get("data", r.json())
+            return bool(data.get("is_active"))
+    except Exception:
+        pass
+    return None
+
+
 def get_group_id(group_name: str) -> str | None:
     """Return the ID of the named subject group, or None if not found."""
     try:
@@ -234,19 +253,32 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
         if not entry["subject"]:
             _resolve_subject_id(entry["source"], entry)
 
-        # Reactivate on map if it was previously retired.
-        if not entry.get("er_active", True):
+        # Reactivate on map unless we've already confirmed it's active.
+        if entry.get("er_active") is not True:
             subj_id = _resolve_subject_id(entry["source"], entry)
             if subj_id:
-                try:
-                    r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
-                                      json={"is_active": True}, timeout=10)
-                    if r.status_code in [200, 201]:
-                        name = callsign.strip() if callsign and callsign.strip() else f"ICAO-{hex_code.upper()}"
-                        print(f"   Reactivated on map: {name}")
-                        entry["er_active"] = True
-                except Exception as e:
-                    print(f"   Warning: Reactivation failed for ICAO-{hex_code.upper()}: {e}")
+                # Unknown state (e.g. right after a process restart) — ask ER
+                # what's actually true before writing anything. Only known-
+                # False (confirmed earlier this run, by our own retire call)
+                # skips straight to the PATCH.
+                if entry.get("er_active") is None:
+                    live = _get_live_active(subj_id)
+                    if live is True:
+                        entry["er_active"] = True  # already active, nothing to do
+                    elif live is False:
+                        entry["er_active"] = False  # confirmed — proceed to reactivate below
+                    # else: check itself failed; leave as None, retry next sighting
+
+                if entry.get("er_active") is False:
+                    try:
+                        r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
+                                          json={"is_active": True}, timeout=10)
+                        if r.status_code in [200, 201]:
+                            name = callsign.strip() if callsign and callsign.strip() else f"ICAO-{hex_code.upper()}"
+                            print(f"   Reactivated on map: {name}")
+                            entry["er_active"] = True
+                    except Exception as e:
+                        print(f"   Warning: Reactivation failed for ICAO-{hex_code.upper()}: {e}")
 
         # If we now see a specific (non-default) subtype that differs from what is registered,
         # patch the ER subject so the icon updates (e.g. plane -> helicopter when A7 arrives).
@@ -395,8 +427,9 @@ def retire_stale_subjects(cache: dict, now: float):
     Subject IDs are populated by ensure_aircraft when an aircraft is first observed.
     """
     for hex_code, entry in cache.items():
-        if not entry.get("er_active", True):
-            continue  # already inactive
+        # Skip only if we've *confirmed* it's already inactive.
+        if entry.get("er_active") is False:
+            continue
         last_seen = entry.get("last_seen")
         if last_seen is None:
             continue
@@ -406,6 +439,19 @@ def retire_stale_subjects(cache: dict, now: float):
         subj_ids = [s for s in [entry.get("subject")] + entry.get("subject_extras", []) if s]
         if not subj_ids:
             continue
+
+        # Unknown state (e.g. right after a restart) — ask ER what's actually
+        # true before writing. Only issue the retire PATCH if it's confirmed
+        # still active; if ER already has it inactive, there's nothing to do.
+        if entry.get("er_active") is None:
+            live = _get_live_active(subj_ids[0])
+            if live is False:
+                entry["er_active"] = False
+                continue
+            elif live is None:
+                continue  # check itself failed; try again next cycle
+
+        all_succeeded = True
         for subj_id in subj_ids:
             try:
                 r = session.patch(f"{ER_SITE}/api/v1.0/subject/{subj_id}/",
@@ -421,9 +467,16 @@ def retire_stale_subjects(cache: dict, now: float):
                     print(f"   Retire {name_after} ({hex_code.upper()}): HTTP {r.status_code}, is_active={is_active_after} (was unseen {int(elapsed)}s)")
                 else:
                     print(f"   Warning: Retire failed for ICAO-{hex_code.upper()}: HTTP {r.status_code} {r.text[:80]}")
+                    all_succeeded = False
             except Exception as e:
                 print(f"   Warning: Could not retire ICAO-{hex_code.upper()}: {e}")
-        entry["er_active"] = False
+                all_succeeded = False
+        # Only mark confirmed-inactive if every PATCH actually succeeded.
+        # A failed attempt leaves state as-is so we retry next cycle instead
+        # of silently giving up — this was the bug behind stale "ghost" aircraft
+        # that stayed visible on the map forever after one failed retire.
+        if all_succeeded:
+            entry["er_active"] = False
 
 
 def run_sync(cache: dict, group_id: str | None) -> int:
@@ -452,9 +505,13 @@ def run_sync(cache: dict, group_id: str | None) -> int:
         if not source_id:
             continue
 
-        # Mark seen and ensure active state is correct.
+        # Mark seen. Do NOT force er_active=True here — ensure_aircraft() above
+        # already sets it accurately (True only on a confirmed PATCH success).
+        # Forcing it here masked failed reactivation attempts: a 403/network
+        # error on the PATCH would still get stamped "active" in our local
+        # bookkeeping, so the retry was silently skipped on every later cycle
+        # even though ER's real is_active stayed False forever.
         cache[hex_code]["last_seen"] = now
-        cache[hex_code]["er_active"] = True
 
         recorded_at = (datetime.now(timezone.utc) - timedelta(seconds=a.get("seen_pos", 0))).isoformat()
 
