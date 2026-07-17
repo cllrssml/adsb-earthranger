@@ -116,6 +116,9 @@ def get_er_cache() -> dict:
             # as None (not True) so the next sighting re-asserts is_active=True
             # instead of silently trusting a stale in-memory guess.
             "er_active":      None,
+            # Same reasoning — a prior run's group-add may have silently failed
+            # (as happened in production), so don't assume membership.
+            "in_group":       None,
         }
         source_uuid_to_hex[s["id"]] = s["manufacturer_id"]
 
@@ -228,7 +231,7 @@ def get_group_id(group_name: str) -> str | None:
     return None
 
 
-def add_to_group(group_id: str, subject_id: str, name: str):
+def add_to_group(group_id: str, subject_id: str, name: str) -> bool:
     try:
         r = session.post(
             f"{ER_SITE}/api/v1.0/subjectgroup/{group_id}/subjects/",
@@ -237,10 +240,11 @@ def add_to_group(group_id: str, subject_id: str, name: str):
         )
         if r.status_code in [200, 201]:
             print(f"   Added {name} to '{SUBJECT_GROUP}' group")
-        else:
-            print(f"   Warning: Group add failed for {name}: {r.status_code} {r.text[:80]}")
+            return True
+        print(f"   Warning: Group add failed for {name}: {r.status_code} {r.text[:80]}")
     except Exception as e:
         print(f"   Warning: Group add error for {name}: {e}")
+    return False
 
 
 def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, group_id: str | None):
@@ -252,6 +256,15 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
         # is an ADS-B source, and _resolve_subject_id guards against non-aircraft types.
         if not entry["subject"]:
             _resolve_subject_id(entry["source"], entry)
+
+        # Ensure group membership unless already confirmed. Covers both aircraft
+        # known from before this process started (in_group defaults to None at
+        # startup, since a prior run's group-add may have silently failed) and a
+        # genuinely still-failing add — retried every sighting until it sticks.
+        if group_id and entry.get("subject") and entry.get("in_group") is not True:
+            name = callsign.strip() if callsign and callsign.strip() else f"ICAO-{hex_code.upper()}"
+            if add_to_group(group_id, entry["subject"], name):
+                entry["in_group"] = True
 
         # Reactivate on map unless we've already confirmed it's active.
         if entry.get("er_active") is not True:
@@ -345,7 +358,7 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
     except Exception as e:
         print(f"   Error creating subject for {name}: {e}")
         cache[hex_code] = {"source": source_id, "subject": None, "subtype": subtype,
-                           "last_seen": time.monotonic(), "er_active": True}
+                           "last_seen": time.monotonic(), "er_active": True, "in_group": None}
         return source_id
 
     subj_id = None
@@ -363,10 +376,10 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
             print(f"   Warning: Source-subject link failed for {name}: {e}")
 
         # 4. Add to ADS-B subject group
-        if group_id:
-            add_to_group(group_id, subj_id, name)
+        in_group = add_to_group(group_id, subj_id, name) if group_id else False
     else:
         print(f"   Warning: Subject creation issue for {name}: {r2.text[:120]}")
+        in_group = False
 
     cache[hex_code] = {
         "source":    source_id,
@@ -374,6 +387,7 @@ def ensure_aircraft(hex_code: str, callsign: str, subtype: str, cache: dict, gro
         "subtype":   subtype,
         "last_seen": time.monotonic(),
         "er_active": True,
+        "in_group":  in_group or None,  # None (not False) so it keeps retrying
     }
     return source_id
 
